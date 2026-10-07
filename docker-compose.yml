@@ -40,6 +40,11 @@ services:
       postgres:
         condition: service_healthy
 
+  # PDF / DOCX / Markdown -> clean text split into chunks ready to embed (internal only)
+  document-processor:
+    build: ./document-processor
+    restart: unless-stopped
+
   n8n:
     image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.40.5}
     restart: unless-stopped
@@ -57,6 +62,8 @@ services:
     depends_on:
       flyway:
         condition: service_completed_successfully
+      document-processor:
+        condition: service_started
 
 volumes:
   postgres_data:

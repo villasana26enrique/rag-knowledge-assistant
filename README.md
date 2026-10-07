@@ -1,7 +1,7 @@
 # RAG Knowledge Assistant
 
-> **Work in progress.** The database layer (schema, ingestion and search functions, row level security, tests) is
-> done; document processing, ingestion workflows, the chat agents and the evaluation report come next.
+> **Work in progress.** The database layer (schema, ingestion and search functions, row level security) and the
+> document processor are done and tested; ingestion workflows, the chat agents and the evaluation report come next.
 
 A retrieval-augmented generation (RAG) engine that serves **several agents from one knowledge store**. Each agent
 answers **only from the documents it is allowed to read**, **cites its sources**, and says **"I don't know"** when
@@ -51,14 +51,45 @@ Schema `knowledge`: `knowledge_bases`, `agents`, `agent_knowledge_bases`, `docum
 | `start_ingestion_run` / `finish_ingestion_run` | Record each sync |
 | `record_answer`, `purge_old_logs` | Answer logging and retention |
 
+## Document processor
+
+`document-processor/` is a small internal service (Python standard library HTTP server + `pypdf` +
+`python-docx`) that turns a file into chunks ready to embed. It calls no model and holds no secrets, so the same
+file always gives the same chunks.
+
+```
+POST /extract-and-chunk?title=Aftercare%20Guide[&max_tokens=500]     body = the file, Content-Type = its type
+```
+
+- **Formats**: PDF, DOCX (Google Docs are exported as DOCX), Markdown and plain text.
+- **Structure first**: DOCX and Markdown headings, and in PDFs the lines set in a larger font, become the section
+  path. Lists and tables are kept as text.
+- **Chunks of about 500 tokens with 15% overlap**, never mixing two sections. A long paragraph is split by sentences,
+  a huge sentence by words.
+- **Each chunk is labeled with where it comes from** — `Aftercare Guide > Tooth Extraction > Eating and drinking` —
+  and that label is embedded with the text (`embedding_text`).
+- **PDF clean-up**: lines rejoined into paragraphs, hyphenated words rejoined, page numbers dropped, paragraphs
+  that run onto the next page rejoined; chunks keep their page range for citations.
+- **`content_hash`** is computed on the extracted text, not on the file, so re-saving a file without changing it
+  is not re-embedded.
+- Not supported (yet): scanned PDFs (no OCR) and text inside images.
+
 ## Getting started
 
 ```bash
 cp .env.example .env        # fill in every value
-docker compose up -d        # PostgreSQL + Flyway migrations + n8n (http://localhost:5679)
+docker compose up -d        # PostgreSQL + Flyway migrations, document-processor and n8n (http://localhost:5679)
 ```
 
 ### Tests
+
+```bash
+docker build --target test document-processor
+```
+
+Runs the processor's `pytest` suite inside the image (the build fails if a test fails). The tests build real PDF,
+DOCX and Markdown files in memory and also call the HTTP server.
+
 
 ```bash
 docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -v ON_ERROR_STOP=1' < database/tests/knowledge_tests.sql

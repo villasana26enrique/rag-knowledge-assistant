@@ -51,6 +51,18 @@ full text, fused with Reciprocal Rank Fusion) and return nothing below a similar
   They run in a rolled-back transaction, **as `rag_app`**, and print `ALL TESTS PASSED`. Add a test for new
   behavior. In assertion messages concatenate `r::text`, not `r` (`'text' || jsonb` is parsed as JSON).
 
+## Document processor (`document-processor/`)
+
+- Same shape as the other internal services of these projects: a standard-library HTTP server (`server.py`),
+  `GET /health`, JSON errors `{"error": ...}`, runs as `nobody`, not published outside the Compose network.
+- `extract.py` (file -> blocks with their heading path), `chunking.py` (blocks -> labeled chunks),
+  `server.py` (HTTP + content hash). Keep it deterministic: no model calls, no network, no secrets.
+- Pin dependencies in `requirements.txt` (runtime) and `requirements-dev.txt` (tests).
+- Tests build their sample files in `tests/samples.py`; no binary fixtures. Run and keep green:
+  `docker build --target test document-processor`.
+- Changing how text is extracted or chunked does not re-process stored documents by itself (their content hash
+  is unchanged): re-ingest the knowledge base when that matters.
+
 ## Secrets
 
 - Never commit `.env`. Document every new variable in `.env.example` with a fake value.
@@ -63,4 +75,5 @@ full text, fused with Reciprocal Rank Fusion) and return nothing below a similar
 | Start everything | `docker compose up -d` |
 | Logs | `docker compose logs -f n8n` |
 | Apply migrations | `docker compose run --rm flyway` |
+| Document processor tests | `docker build --target test document-processor` |
 | Database shell (owner) | `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'` |
