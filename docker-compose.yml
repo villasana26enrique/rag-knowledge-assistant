@@ -1,0 +1,65 @@
+name: rag-knowledge-assistant
+
+services:
+  postgres:
+    build: ./postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      TZ: UTC
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Only reachable from this machine (DBeaver, psql). n8n uses the internal network.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5434}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Applies database/migrations (once each) and database/functions (when they change), then exits
+  flyway:
+    image: flyway/flyway:11
+    command: migrate
+    environment:
+      FLYWAY_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      FLYWAY_USER: ${POSTGRES_USER}
+      FLYWAY_PASSWORD: ${POSTGRES_PASSWORD}
+      FLYWAY_SCHEMAS: knowledge
+      FLYWAY_LOCATIONS: filesystem:/flyway/sql/migrations,filesystem:/flyway/sql/functions
+      FLYWAY_CONNECT_RETRIES: 10
+      # ${rag_app_password} in R__app_role.sql
+      FLYWAY_PLACEHOLDERS_RAG_APP_PASSWORD: ${RAG_APP_PASSWORD}
+    volumes:
+      - ./database/migrations:/flyway/sql/migrations:ro
+      - ./database/functions:/flyway/sql/functions:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.40.5}
+    restart: unless-stopped
+    environment:
+      GENERIC_TIMEZONE: America/New_York
+      TZ: America/New_York
+      WEBHOOK_URL: ${N8N_WEBHOOK_URL:-http://localhost:5679/}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # Versioned workflows + setup/export helpers (see scripts/)
+      - ./n8n:/repo
+    ports:
+      - "${N8N_HOST_PORT:-5679}:5678"
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+
+volumes:
+  postgres_data:
+    name: ${POSTGRES_VOLUME:-rag_knowledge_assistant_postgres}
+  n8n_data:
+    name: ${N8N_VOLUME:-rag_knowledge_assistant_n8n}
