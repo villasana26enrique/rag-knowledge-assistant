@@ -1,7 +1,7 @@
 # RAG Knowledge Assistant
 
-> **Work in progress.** The database layer (schema, ingestion and search functions, row level security) and the
-> document processor are done and tested; ingestion workflows, the chat agents and the evaluation report come next.
+> **Work in progress.** The database layer, the document processor and the ingestion (Google Drive sync and upload
+> API) are done and tested end to end; the chat agents and the evaluation report come next.
 
 A retrieval-augmented generation (RAG) engine that serves **several agents from one knowledge store**. Each agent
 answers **only from the documents it is allowed to read**, **cites its sources**, and says **"I don't know"** when
@@ -31,9 +31,12 @@ but not in a base the patient assistant can read.
   catches exact terms ("Delta Dental PPO"). Both lists are fused with Reciprocal Rank Fusion, in SQL.
 - **"I don't know" is a feature.** Below a similarity threshold the search returns no passages and tells the agent
   to say so. The threshold is calibrated with the evaluation set, not guessed.
-- **Incremental, atomic ingestion.** Only new or changed files are embedded (modified date, then content hash);
-  files removed from the source are removed from the index; a document's chunks are replaced in one transaction,
-  so searches never see half a document.
+- **Incremental, atomic ingestion.** Only new, changed or renamed files are processed (modified date and title),
+  and only those whose text or title really changed are embedded (content hash); files removed from the source are
+  removed from the index; a document's chunks are replaced in one transaction, so searches never see half a document.
+- **Least privilege for Drive.** A Google service account with read-only access to the shared folders only — no
+  personal OAuth grant that expires or sees the whole Drive.
+- **One bad file never stops a sync.** It is recorded with its error and the run ends as `partial`.
 - **Every search is logged** with its candidates and scores, for debugging and to find new evaluation cases.
 
 ## Database
@@ -44,7 +47,7 @@ Schema `knowledge`: `knowledge_bases`, `agents`, `agent_knowledge_bases`, `docum
 | Function | Purpose |
 |---|---|
 | `plan_sync` | Compare a source listing with the stored documents: what to process, what to delete |
-| `skip_if_unchanged` | Same content hash: skip the embeddings |
+| `skip_if_unchanged` | Same text and title: skip the embeddings |
 | `upsert_document` | Store a document and replace its chunks atomically |
 | `delete_document` | Remove a document from the index (the row is kept for audit) |
 | `search_knowledge` | Hybrid search for an agent, with threshold and logging |
@@ -74,12 +77,59 @@ POST /extract-and-chunk?title=Aftercare%20Guide[&max_tokens=500]     body = the 
   is not re-embedded.
 - Not supported (yet): scanned PDFs (no OCR) and text inside images.
 
+## Ingestion
+
+```mermaid
+flowchart LR
+  D[(Google Drive folder<br/>one per knowledge base)] --> S[Ingest: Sync Google Drive<br/>every 15 min]
+  U([Other systems]) -- POST /webhook/ingest --> A[Ingest: Upload API]
+  S --> K[Ingest: Sync knowledge base<br/>list, plan_sync, run log]
+  K --> P[Ingest: Apply document change]
+  A --> P
+  P --> DP[document-processor<br/>text + chunks]
+  P --> G[Gemini embeddings<br/>batches of 100]
+  P --> PG[(PostgreSQL<br/>upsert_document / delete_document)]
+```
+
+| Workflow | What it does |
+|---|---|
+| `Ingest: Sync Google Drive` | Every 15 minutes (or *Run now*): syncs each knowledge base that has a Drive folder |
+| `Ingest: Sync knowledge base` | Lists the folder, asks `plan_sync` what changed, applies each change, records the run in `ingestion_runs` |
+| `Ingest: Apply document change` | One file: download (Google Docs exported as DOCX) → `document-processor` → skip if unchanged → embeddings (`gemini-embedding-001`, 768 dimensions, `RETRIEVAL_DOCUMENT`) → `upsert_document`; or `delete_document` |
+| `Ingest: Upload API` | `POST /webhook/ingest` for systems that do not use Drive |
+
+Upload API (`multipart/form-data`, `X-API-Key` header = `INGEST_API_KEY`):
+
+```bash
+curl -H "X-API-Key: $INGEST_API_KEY" -F knowledge_base=patient-handbook -F source_id=aftercare-v1      -F "file=@aftercare.pdf" http://localhost:5679/webhook/ingest
+# {"ok":true,"status":"added","source_id":"aftercare-v1","title":"aftercare","chunk_count":4}
+```
+
+`status` is `added`, `updated`, `unchanged` or `failed` (HTTP 422, with `error`). `title` defaults to the file
+name, `source_id` too: sending the same `source_id` again replaces that document.
+
 ## Getting started
+
+### 1. Google Drive access (service account)
+
+1. In Google Cloud Console, enable the **Google Drive API** and create a service account with **no roles**.
+2. Create a **JSON key** for it and keep the file **outside the repository**; `.env` only holds its path
+   (`GOOGLE_SERVICE_ACCOUNT_KEY_FILE`).
+3. Share each knowledge base's Drive folder with the service account's email as **Viewer**, and put the folder ids
+   in `.env` (`DRIVE_FOLDER_PATIENT_HANDBOOK`, `DRIVE_FOLDER_STAFF_HANDBOOK`).
+
+### 2. Configure, start and set up
 
 ```bash
 cp .env.example .env        # fill in every value
 docker compose up -d        # PostgreSQL + Flyway migrations, document-processor and n8n (http://localhost:5679)
+./scripts/setup-n8n.sh      # credentials, Drive folders, workflows and publishing
 ```
+
+`setup-n8n.sh` creates the n8n credentials from `.env` with the ids the workflows reference (Postgres as `rag_app`,
+the Drive service account, Gemini, the upload API key), links each knowledge base to its Drive folder, imports and
+publishes the workflows. n8n stores the credentials encrypted with `N8N_ENCRYPTION_KEY`; after the setup it does not
+read the key file again. Then open n8n, create the owner account and run *Ingest: Sync Google Drive*.
 
 ### Tests
 
@@ -99,6 +149,16 @@ They run as the application role inside a rolled-back transaction and print `ALL
 ingestion and validation, updates and versioning, change detection, sync planning (including the guard against an
 empty listing), deletion and restore, hybrid ranking, the "I don't know" threshold, isolation between bases
 (searches, plain queries and writes), logging, ingestion runs and retention.
+
+## Known limitations
+
+- Only PDF, DOCX, Google Docs, Markdown and plain text are synced; other files in the folders are ignored.
+  Scanned PDFs (no text layer) fail with a clear error.
+- A file that cannot be processed is retried on every sync until it is fixed or removed.
+- An empty folder listing never deletes the whole knowledge base (it is far more likely a failed listing); the run
+  fails instead. Remove the last documents with `delete_document` if that is really intended.
+- Up to 1,000 files per folder (no paging yet); subfolders are not synced.
+- Permissions are per knowledge base, not per document or user.
 
 ## License
 

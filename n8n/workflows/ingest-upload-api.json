@@ -1,0 +1,371 @@
+{
+  "id": "M1tFx4Ps6BjN9cQh",
+  "name": "Ingest: Upload API",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ingest",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-0033-post-ingest",
+      "name": "POST /ingest",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        300
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "iA2pK5eY8uR3tW6q",
+          "name": "Ingest API key"
+        }
+      },
+      "webhookId": "b7e2c4a1-5d3f-4e8a-9c6b-2f1a0d9e8c71"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// multipart/form-data: file (required), knowledge_base (required), source_id and title (optional)\nconst item = $input.first();\nconst fields = item.json.body ?? {};\nconst key = Object.keys(item.binary ?? {})[0];\nconst fail = (message) => [{ json: { ok: false, message } }];\nif (!key) return fail('Send the document as a multipart/form-data field named \"file\".');\nif (!fields.knowledge_base) return fail('The knowledge_base field is required.');\nconst file = item.binary[key];\nconst fileName = file.fileName ?? 'document';\nconst byExtension = { pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',\n  md: 'text/markdown', txt: 'text/plain' };\nconst extension = fileName.split('.').pop().toLowerCase();\nconst mimeType = byExtension[extension] ?? file.mimeType;\nreturn [{\n  json: {\n    ok: true, action: 'process', source: 'upload', knowledge_base: String(fields.knowledge_base),\n    source_id: String(fields.source_id || fileName),\n    title: String(fields.title || fileName.replace(/\\.[^.]+$/, '')),\n    mime_type: mimeType, modified_at: new Date().toISOString(), source_url: null,\n  },\n  binary: { data: file },\n}];"
+      },
+      "id": "node-0034-validate-upload",
+      "name": "Validate upload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0035-valid-",
+      "name": "Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        440,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT knowledge.start_ingestion_run($1, 'upload') AS r;",
+        "options": {
+          "queryReplacement": "={{ [$json.knowledge_base] }}"
+        }
+      },
+      "id": "node-0036-start-ingestion-run",
+      "name": "Start ingestion run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        660,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "pG7rT2kW9mQ4xL1z",
+          "name": "Postgres rag_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.r.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0037-known-knowledge-base-",
+      "name": "Known knowledge base?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        880,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// The database node does not carry binary data; take the validated item with its file\nconst upload = $('Validate upload').first();\nreturn [{ json: upload.json, binary: upload.binary }];"
+      },
+      "id": "node-0038-attach-the-file-again",
+      "name": "Attach the file again",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "V5gWq8Rn2KdL7yUa",
+          "cachedResultName": "Ingest: Apply document change"
+        },
+        "mode": "each",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "node-0039-apply-the-change",
+      "name": "Apply the change",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1320,
+        100
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const outcome = $input.first().json;\nconst ok = ['added', 'updated', 'unchanged'].includes(outcome.status);\nconst stats = { files_seen: 1, added: 0, updated: 0, unchanged: 0, deleted: 0, failed: ok ? 0 : 1,\n  errors: ok ? [] : [{ source_id: outcome.source_id ?? null, title: outcome.title ?? null, error: outcome.error ?? 'Unknown error' }] };\nif (ok) stats[outcome.status] = 1;\nreturn [{ json: { run_id: $('Start ingestion run').first().json.r.run_id, stats, outcome } }];"
+      },
+      "id": "node-0040-summarize-run",
+      "name": "Summarize run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT knowledge.finish_ingestion_run($1::bigint, $2::jsonb) AS r;",
+        "options": {
+          "queryReplacement": "={{ [$json.run_id, JSON.stringify($json.stats)] }}"
+        }
+      },
+      "id": "node-0041-finish-ingestion-run",
+      "name": "Finish ingestion run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1760,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "pG7rT2kW9mQ4xL1z",
+          "name": "Postgres rag_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: $('Summarize run').first().json.stats.failed === 0, ...$('Summarize run').first().json.outcome }) }}",
+        "options": {
+          "responseCode": "={{ $('Summarize run').first().json.stats.failed === 0 ? 200 : 422 }}"
+        }
+      },
+      "id": "node-0042-respond-with-the-result",
+      "name": "Respond with the result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1980,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ ok: false, message: $json.message ?? $json.r?.message }) }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "node-0043-reject-the-request",
+      "name": "Reject the request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1100,
+        400
+      ]
+    }
+  ],
+  "connections": {
+    "POST /ingest": {
+      "main": [
+        [
+          {
+            "node": "Validate upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate upload": {
+      "main": [
+        [
+          {
+            "node": "Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid?": {
+      "main": [
+        [
+          {
+            "node": "Start ingestion run",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Start ingestion run": {
+      "main": [
+        [
+          {
+            "node": "Known knowledge base?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Known knowledge base?": {
+      "main": [
+        [
+          {
+            "node": "Attach the file again",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject the request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Attach the file again": {
+      "main": [
+        [
+          {
+            "node": "Apply the change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply the change": {
+      "main": [
+        [
+          {
+            "node": "Summarize run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Summarize run": {
+      "main": [
+        [
+          {
+            "node": "Finish ingestion run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finish ingestion run": {
+      "main": [
+        [
+          {
+            "node": "Respond with the result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {},
+  "nodeGroups": [],
+  "tags": []
+}

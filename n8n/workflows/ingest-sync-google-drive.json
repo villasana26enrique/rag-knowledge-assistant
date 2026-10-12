@@ -1,0 +1,169 @@
+{
+  "id": "Q8vNd2LxR4tYw7Ka",
+  "name": "Ingest: Sync Google Drive",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "node-0029-every-15-minutes",
+      "name": "Every 15 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "node-0030-run-now",
+      "name": "Run now",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT slug AS knowledge_base, source_folder_id AS folder_id\nFROM knowledge.knowledge_bases\nWHERE source_folder_id IS NOT NULL\nORDER BY slug;",
+        "options": {}
+      },
+      "id": "node-0031-knowledge-bases-with-a-drive-folder",
+      "name": "Knowledge bases with a Drive folder",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        240,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "pG7rT2kW9mQ4xL1z",
+          "name": "Postgres rag_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "H3pZc6Jm9TfB1sXe",
+          "cachedResultName": "Ingest: Sync knowledge base"
+        },
+        "mode": "each",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "knowledge_base": "={{ $json.knowledge_base }}",
+            "folder_id": "={{ $json.folder_id }}",
+            "trigger": "={{ $('Run now').isExecuted ? 'manual' : 'schedule' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false,
+              "id": "knowledge_base",
+              "displayName": "knowledge_base"
+            },
+            {
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false,
+              "id": "folder_id",
+              "displayName": "folder_id"
+            },
+            {
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false,
+              "id": "trigger",
+              "displayName": "trigger"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "node-0032-sync-each-knowledge-base",
+      "name": "Sync each knowledge base",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        480,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Every 15 minutes": {
+      "main": [
+        [
+          {
+            "node": "Knowledge bases with a Drive folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run now": {
+      "main": [
+        [
+          {
+            "node": "Knowledge bases with a Drive folder",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Knowledge bases with a Drive folder": {
+      "main": [
+        [
+          {
+            "node": "Sync each knowledge base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {},
+  "nodeGroups": [],
+  "tags": []
+}

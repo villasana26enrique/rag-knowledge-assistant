@@ -1,0 +1,738 @@
+{
+  "id": "V5gWq8Rn2KdL7yUa",
+  "name": "Ingest: Apply document change",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "node-0001-start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "rules",
+        "rules": {
+          "values": [
+            {
+              "renameOutput": true,
+              "outputKey": "process",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "c1",
+                    "leftValue": "={{ $json.action === 'process' }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "renameOutput": true,
+              "outputKey": "delete",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose",
+                  "version": 2
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "c1",
+                    "leftValue": "={{ $json.action === 'delete' }}",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0002-what-to-do-",
+      "name": "What to do?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        220,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT knowledge.delete_document($1, $2, $3) AS r;",
+        "options": {
+          "queryReplacement": "={{ [$json.knowledge_base, $json.source, $json.source_id] }}"
+        }
+      },
+      "id": "node-0003-delete-document",
+      "name": "Delete document",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        440,
+        520
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "pG7rT2kW9mQ4xL1z",
+          "name": "Postgres rag_app"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "={{ $json.r.deleted ? 'deleted' : 'already_deleted' }}",
+              "type": "string"
+            },
+            {
+              "id": "source_id",
+              "name": "source_id",
+              "value": "={{ $('Start').first().json.source_id }}",
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "name": "title",
+              "value": "={{ $('Start').first().json.title }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0004-deleted",
+      "name": "Deleted",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        660,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $binary?.data !== undefined }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0005-file-already-attached-",
+      "name": "File already attached?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        440,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://www.googleapis.com/drive/v3/files/' + $('Start').first().json.source_id + ($('Start').first().json.mime_type === 'application/vnd.google-apps.document' ? '/export?mimeType=' + encodeURIComponent('application/vnd.openxmlformats-officedocument.wordprocessingml.document') : '?alt=media&supportsAllDrives=true') }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleApi",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "id": "node-0006-download-from-drive",
+      "name": "Download from Drive",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        660,
+        300
+      ],
+      "credentials": {
+        "googleApi": {
+          "id": "dR5sA8vN3jK6hY2b",
+          "name": "Google Drive service account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://document-processor:8080/extract-and-chunk",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "title",
+              "value": "={{ $('Start').first().json.title }}"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "={{ $('Start').first().json.mime_type === 'application/vnd.google-apps.document' ? 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' : $('Start').first().json.mime_type }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "node-0007-extract-and-chunk",
+      "name": "Extract and chunk",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        880,
+        200
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT knowledge.skip_if_unchanged($1, $2, $3, $4, $5, $6::timestamptz) AS r;",
+        "options": {
+          "queryReplacement": "={{ [$('Start').first().json.knowledge_base, $('Start').first().json.source, $('Start').first().json.source_id, $('Start').first().json.title, $json.content_hash, $('Start').first().json.modified_at] }}"
+        }
+      },
+      "id": "node-0008-skip-if-unchanged",
+      "name": "Skip if unchanged",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        1100,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "pG7rT2kW9mQ4xL1z",
+          "name": "Postgres rag_app"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.r.unchanged === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0009-unchanged-",
+      "name": "Unchanged?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1320,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "unchanged",
+              "type": "string"
+            },
+            {
+              "id": "source_id",
+              "name": "source_id",
+              "value": "={{ $('Start').first().json.source_id }}",
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "name": "title",
+              "value": "={{ $('Start').first().json.title }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0010-unchanged",
+      "name": "Unchanged",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        1540,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Gemini embeds up to 100 texts per request\nconst document = $('Extract and chunk').first().json;\nconst batches = [];\nfor (let i = 0; i < document.chunks.length; i += 100) {\n  batches.push({ json: { requests: document.chunks.slice(i, i + 100).map(chunk => ({\n    model: 'models/gemini-embedding-001',\n    content: { parts: [{ text: chunk.embedding_text }] },\n    taskType: 'RETRIEVAL_DOCUMENT',\n    title: document.title,\n    outputDimensionality: 768,\n  })) } });\n}\nreturn batches;"
+      },
+      "id": "node-0011-batch-the-chunks",
+      "name": "Batch the chunks",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1540,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ requests: $json.requests }) }}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "node-0012-embed-with-gemini",
+      "name": "Embed with Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1760,
+        300
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "gM4nK7pQ1wE9rT6y",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "const start = $('Start').first().json;\nconst document = $('Extract and chunk').first().json;\nconst embeddings = $input.all().flatMap(item => item.json.embeddings.map(embedding => embedding.values));\nif (embeddings.length !== document.chunks.length) {\n  throw new Error(`Got ${embeddings.length} embeddings for ${document.chunks.length} chunks`);\n}\nreturn [{ json: {\n  document: {\n    source: start.source, source_id: start.source_id, title: start.title, mime_type: start.mime_type,\n    source_url: start.source_url || null, content_hash: document.content_hash, source_modified_at: start.modified_at,\n  },\n  chunks: document.chunks.map((chunk, i) => ({\n    section: chunk.section, content: chunk.content, token_count: chunk.token_count,\n    page_start: chunk.page_start, page_end: chunk.page_end, embedding: embeddings[i],\n  })),\n} }];"
+      },
+      "id": "node-0013-build-document",
+      "name": "Build document",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT knowledge.upsert_document($1, $2::jsonb, $3::jsonb) AS r;",
+        "options": {
+          "queryReplacement": "={{ [$('Start').first().json.knowledge_base, JSON.stringify($json.document), JSON.stringify($json.chunks)] }}"
+        }
+      },
+      "id": "node-0014-store-document",
+      "name": "Store document",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        2200,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "pG7rT2kW9mQ4xL1z",
+          "name": "Postgres rag_app"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "={{ $json.r.ok ? $json.r.action : 'failed' }}",
+              "type": "string"
+            },
+            {
+              "id": "source_id",
+              "name": "source_id",
+              "value": "={{ $('Start').first().json.source_id }}",
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "name": "title",
+              "value": "={{ $('Start').first().json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "chunk_count",
+              "name": "chunk_count",
+              "value": "={{ $json.r.chunk_count ?? 0 }}",
+              "type": "number"
+            },
+            {
+              "id": "error",
+              "name": "error",
+              "value": "={{ $json.r.ok ? '' : $json.r.message }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0015-stored",
+      "name": "Stored",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        2420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "status",
+              "name": "status",
+              "value": "failed",
+              "type": "string"
+            },
+            {
+              "id": "source_id",
+              "name": "source_id",
+              "value": "={{ $('Start').first().json.source_id }}",
+              "type": "string"
+            },
+            {
+              "id": "title",
+              "name": "title",
+              "value": "={{ $('Start').first().json.title }}",
+              "type": "string"
+            },
+            {
+              "id": "error",
+              "name": "error",
+              "value": "={{ typeof $json.error === 'string' ? $json.error : ($json.error?.message ?? $json.message ?? JSON.stringify($json)) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0016-report-failure",
+      "name": "Report failure",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        2420,
+        600
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "What to do?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "What to do?": {
+      "main": [
+        [
+          {
+            "node": "File already attached?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Delete document",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Delete document": {
+      "main": [
+        [
+          {
+            "node": "Deleted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "File already attached?": {
+      "main": [
+        [
+          {
+            "node": "Extract and chunk",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download from Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download from Drive": {
+      "main": [
+        [
+          {
+            "node": "Extract and chunk",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract and chunk": {
+      "main": [
+        [
+          {
+            "node": "Skip if unchanged",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip if unchanged": {
+      "main": [
+        [
+          {
+            "node": "Unchanged?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unchanged?": {
+      "main": [
+        [
+          {
+            "node": "Unchanged",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Batch the chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batch the chunks": {
+      "main": [
+        [
+          {
+            "node": "Embed with Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed with Gemini": {
+      "main": [
+        [
+          {
+            "node": "Build document",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build document": {
+      "main": [
+        [
+          {
+            "node": "Store document",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store document": {
+      "main": [
+        [
+          {
+            "node": "Stored",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {},
+  "nodeGroups": [],
+  "tags": []
+}

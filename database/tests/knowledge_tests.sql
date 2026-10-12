@@ -47,7 +47,7 @@ DECLARE
 BEGIN
   chunks_a := jsonb_build_array(
     jsonb_build_object('section', 'Aftercare Guide > Tooth Extraction',
-                       'content', 'After a tooth extraction, do not eat for two hours.', 'embedding', e1),
+                       'content', 'After a tooth extraction, do not eat for two hours.', 'embedding', e1, 'page_start', 1, 'page_end', 2),
     jsonb_build_object('section', 'Aftercare Guide > Insurance',
                        'content', 'We accept Delta Dental PPO plans.',
                        'embedding', pg_temp.test_embedding(ARRAY[0.8, 0.6])));
@@ -72,12 +72,20 @@ BEGIN
   ASSERT (r->>'ok')::boolean = false, 'Embeddings with the wrong dimensions should be rejected';
   r := knowledge.upsert_document('test-kb-a', doc_a || '{"source": "dropbox"}', chunks_a);
   ASSERT (r->>'ok')::boolean = false, 'Unknown sources should be rejected';
+  r := knowledge.upsert_document('test-kb-a', doc_a,
+         jsonb_build_array(jsonb_build_object('content', 'x', 'embedding', e1, 'page_start', 3, 'page_end', 2)));
+  ASSERT (r->>'ok')::boolean = false, 'A page range ending before it starts should be rejected';
+  r := knowledge.upsert_document('test-kb-a', doc_a,
+         jsonb_build_array(jsonb_build_object('content', 'x', 'embedding', e1, 'page_start', 3)));
+  ASSERT (r->>'ok')::boolean = false, 'A page range needs both ends';
 
   ---------------------------------------------------------------- search
   r := knowledge.search_knowledge('test-agent-a', 'What should I do after an extraction?', e1::text);
   ASSERT (r->>'ok')::boolean AND (r->>'answerable')::boolean, 'A matching question should be answerable: ' || r::text;
   ASSERT r->'results'->0->>'content' LIKE 'After a tooth extraction%'
          AND r->'results'->0->>'document_title' = 'Aftercare Guide', 'Best match should come first, with its title';
+  ASSERT (r->'results'->0->>'page_start')::int = 1 AND (r->'results'->0->>'page_end')::int = 2,
+         'Results should carry their page range for citations: ' || r::text;
 
   -- Hybrid: the vector search prefers the extraction chunk, but "PPO" only appears in the insurance chunk.
   -- Found by both searches, the insurance chunk must win the fusion.
@@ -111,7 +119,7 @@ BEGIN
          'An agent assigned to both bases should find it: ' || r::text;
 
   -- Searching right after ingesting into B in the same transaction must not widen agent A's access
-  PERFORM knowledge.skip_if_unchanged('test-kb-b', 'google_drive', 'file-9', 'hash-9', now());
+  PERFORM knowledge.skip_if_unchanged('test-kb-b', 'google_drive', 'file-9', 'Staff Policies', 'hash-9', now());
   r := knowledge.search_knowledge('test-agent-a', 'How many vacation days do staff get?', e3::text);
   ASSERT (r->>'answerable')::boolean = false, 'Ingestion settings must not leak into searches';
 
@@ -151,12 +159,14 @@ BEGIN
          'The old chunks should be replaced, not added to';
   PERFORM set_config('app.agent_id', '', true);
 
-  r := knowledge.skip_if_unchanged('test-kb-a', 'google_drive', 'file-1', 'hash-2', '2026-02-01T00:00:00Z');
+  r := knowledge.skip_if_unchanged('test-kb-a', 'google_drive', 'file-1', 'Aftercare Guide', 'hash-2', '2026-02-01T00:00:00Z');
   ASSERT (r->>'unchanged')::boolean, 'Same content hash should be detected as unchanged';
-  r := knowledge.skip_if_unchanged('test-kb-a', 'google_drive', 'file-1', 'hash-3', '2026-02-01T00:00:00Z');
+  r := knowledge.skip_if_unchanged('test-kb-a', 'google_drive', 'file-1', 'Aftercare Guide', 'hash-3', '2026-02-01T00:00:00Z');
   ASSERT (r->>'unchanged')::boolean = false, 'A different hash should need processing';
-  r := knowledge.skip_if_unchanged('test-kb-a', 'google_drive', 'file-new', 'hash-1', now());
+  r := knowledge.skip_if_unchanged('test-kb-a', 'google_drive', 'file-new', 'New File', 'hash-1', now());
   ASSERT (r->>'unchanged')::boolean = false, 'A new file should need processing';
+  r := knowledge.skip_if_unchanged('test-kb-a', 'google_drive', 'file-1', 'Aftercare Guide (2026)', 'hash-2', now());
+  ASSERT (r->>'unchanged')::boolean = false, 'A renamed file should be processed again (its title labels every chunk)';
 
   ---------------------------------------------------------------- sync plan
   -- file-1 is stored with modified_at 2026-02-01 (updated by skip_if_unchanged above)
@@ -170,6 +180,10 @@ BEGIN
   r := knowledge.plan_sync('test-kb-a', 'google_drive',
          '[{"source_id": "file-1", "title": "Aftercare Guide", "modified_at": "2026-03-01T00:00:00Z"}]');
   ASSERT r->'to_process'->0->>'source_id' = 'file-1', 'A modified file should be processed again: ' || r::text;
+
+  r := knowledge.plan_sync('test-kb-a', 'google_drive',
+         '[{"source_id": "file-1", "title": "Aftercare Guide (renamed)", "modified_at": "2026-02-01T00:00:00Z"}]');
+  ASSERT r->'to_process'->0->>'source_id' = 'file-1', 'A renamed file should be processed again, even with the same date: ' || r::text;
 
   r := knowledge.plan_sync('test-kb-a', 'google_drive',
          '[{"source_id": "file-2", "title": "Insurance FAQ", "modified_at": "2026-02-01T00:00:00Z"}]');

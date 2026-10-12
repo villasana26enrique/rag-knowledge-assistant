@@ -79,6 +79,8 @@ BEGIN
               'section', c.section,
               'content', c.content,
               'source_url', d.source_url,
+              'page_start', c.page_start,
+              'page_end', c.page_end,
               'similarity', round((1 - (c.embedding <=> v_embedding))::numeric, 4),
               'score', round(f.score, 6))
             ORDER BY f.score DESC, f.id)

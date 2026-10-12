@@ -21,6 +21,7 @@ END $$;
 
 -- Compares the files currently in the source with what is stored.
 -- p_files: [{source_id, title, modified_at}] -> files to (re)process and documents to delete.
+-- A file is (re)processed when it is new, was deleted, has a new date or a new title.
 CREATE OR REPLACE FUNCTION plan_sync(p_knowledge_base text, p_source text, p_files jsonb) RETURNS jsonb
 LANGUAGE plpgsql
 SET search_path = knowledge, public AS $$
@@ -47,9 +48,11 @@ BEGIN
   )
   SELECT
     coalesce(jsonb_agg(to_jsonb(f)) FILTER (
-      WHERE d.id IS NULL OR d.status = 'deleted' OR d.source_modified_at IS DISTINCT FROM f.modified_at), '[]'),
+      WHERE d.id IS NULL OR d.status = 'deleted' OR d.source_modified_at IS DISTINCT FROM f.modified_at
+         OR d.title IS DISTINCT FROM f.title), '[]'),
     count(*) FILTER (
-      WHERE d.status = 'active' AND d.source_modified_at IS NOT DISTINCT FROM f.modified_at)
+      WHERE d.status = 'active' AND d.source_modified_at IS NOT DISTINCT FROM f.modified_at
+        AND d.title IS NOT DISTINCT FROM f.title)
   INTO v_process, v_unchanged
   FROM files f
   LEFT JOIN documents d
@@ -66,10 +69,12 @@ BEGIN
 END $$;
 
 
--- A file whose date changed may still have the same text (renamed, permissions changed...).
--- Same hash: remember the new date and skip the embeddings.
+-- A file whose date changed may still have the same text (permissions changed, edited and reverted...).
+-- Same text and same title: remember the new date and skip the embeddings.
+-- A new title is a change: it is part of every chunk's label, which is embedded with the text.
+DROP FUNCTION IF EXISTS skip_if_unchanged(text, text, text, text, timestamptz);
 CREATE OR REPLACE FUNCTION skip_if_unchanged(p_knowledge_base text, p_source text, p_source_id text,
-                                             p_content_hash text, p_source_modified_at timestamptz)
+                                             p_title text, p_content_hash text, p_source_modified_at timestamptz)
 RETURNS jsonb
 LANGUAGE plpgsql
 SET search_path = knowledge, public AS $$
@@ -83,7 +88,7 @@ BEGIN
   UPDATE documents
   SET source_modified_at = p_source_modified_at, updated_at = now()
   WHERE knowledge_base_id = v_kb_id AND source = p_source AND source_id = p_source_id
-    AND status = 'active' AND content_hash = p_content_hash;
+    AND status = 'active' AND content_hash = p_content_hash AND title = p_title;
 
   RETURN jsonb_build_object('ok', true, 'unchanged', FOUND);
 END $$;
@@ -92,7 +97,7 @@ END $$;
 -- Stores a document and replaces all its chunks in one transaction:
 -- searches see either the previous version or the new one, never a mix or nothing.
 -- p_document: {source, source_id, title, mime_type, source_url, content_hash, source_modified_at}
--- p_chunks:   [{section, content, token_count, embedding: [768 numbers]}] in document order
+-- p_chunks:   [{section, content, token_count, page_start, page_end, embedding: [768 numbers]}] in document order
 CREATE OR REPLACE FUNCTION upsert_document(p_knowledge_base text, p_document jsonb, p_chunks jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -123,6 +128,18 @@ BEGIN
                 OR jsonb_array_length(c->'embedding') <> 768) THEN
     RETURN jsonb_build_object('ok', false, 'message', 'Every chunk needs content and a 768-dimension embedding.');
   END IF;
+  -- Pages: both missing, or both numbers with 1 <= start <= end
+  IF EXISTS (SELECT FROM jsonb_array_elements(p_chunks) c,
+                    LATERAL (SELECT jsonb_typeof(coalesce(c->'page_start', 'null')) AS start_type,
+                                    jsonb_typeof(coalesce(c->'page_end', 'null')) AS end_type) t
+             WHERE NOT CASE
+                     WHEN t.start_type = 'null' AND t.end_type = 'null' THEN true
+                     WHEN t.start_type = 'number' AND t.end_type = 'number'
+                       THEN (c->>'page_start')::numeric >= 1 AND (c->>'page_end')::numeric >= (c->>'page_start')::numeric
+                     ELSE false
+                   END) THEN
+    RETURN jsonb_build_object('ok', false, 'message', 'Page ranges need page_start >= 1 and page_end >= page_start.');
+  END IF;
 
   SELECT status INTO v_previous_status
   FROM documents
@@ -148,9 +165,11 @@ BEGIN
 
   DELETE FROM chunks WHERE document_id = v_document_id;
 
-  INSERT INTO chunks (document_id, knowledge_base_id, chunk_index, section, content, token_count, embedding)
+  INSERT INTO chunks (document_id, knowledge_base_id, chunk_index, section, content, token_count, embedding,
+                      page_start, page_end)
   SELECT v_document_id, v_kb_id, (c.ordinality - 1)::int, nullif(c.value->>'section', ''), c.value->>'content',
-         (c.value->>'token_count')::int, (c.value->>'embedding')::vector
+         (c.value->>'token_count')::int, (c.value->>'embedding')::vector,
+         (c.value->>'page_start')::int, (c.value->>'page_end')::int
   FROM jsonb_array_elements(p_chunks) WITH ORDINALITY AS c;
   GET DIAGNOSTICS v_chunk_count = ROW_COUNT;
 
