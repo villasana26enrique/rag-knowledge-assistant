@@ -79,6 +79,12 @@ full text, fused with Reciprocal Rank Fusion) and return nothing below a similar
   n8n connects to PostgreSQL as `rag_app`, never as the owner.
 - Never hard-code instance data in workflows: Drive folder ids live in `knowledge.knowledge_bases.source_folder_id`
   (set by `setup-n8n.sh` from `DRIVE_FOLDER_<KNOWLEDGE_BASE>` variables), credentials are referenced, never embedded.
+- AI Agent nodes have a fallback model (`needsFallback`, a second chat model on input 1): keep both, so a 503 from
+  one Gemini model does not leave the user without an answer.
+- AI Agent nodes keep `options.maxTokensFromMemory` (8000). It makes n8n trim the memory so the history always
+  starts on a user message. Without it, the memory window (which counts tool calls as messages) can start in the
+  middle of a tool call, and Gemini 3 rejects the request with 400 "function call turn comes immediately after a user
+  turn". The option is hidden in the n8n UI: keep it in the JSON.
 - Chat agents: the agent slug is a fixed value in the tool node, never `$fromAI`. The chat trigger answers with
   the last node, which must output `{ output }` (the `Reply` node); keep side effects (`Store the answer`) before it
   with `onError: continueRegularOutput`.

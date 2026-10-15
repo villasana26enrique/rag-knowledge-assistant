@@ -221,7 +221,8 @@ empty listing), deletion and restore, hybrid ranking, the "I don't know" thresho
 - Up to 1,000 files per folder (no paging yet); subfolders are not synced.
 - Permissions are per knowledge base, not per document or user.
 - On Gemini's free tier, replies can take from a few seconds to over a minute when the models are under high demand
-  (503 errors are retried; after three failures the user gets an apology, not an error). A paid tier fixes this.
+  (503 errors are retried and then answered by a fallback model; if both fail the user gets an apology in their
+  language, not an error). A paid tier fixes this.
 - The "I don't know" threshold (0.6) is a placeholder until the evaluation set calibrates it: an unrelated question
   can still get loosely related passages, and only the prompt keeps the agent from using them.
 

@@ -32,8 +32,10 @@
         "promptType": "define",
         "text": "={{ $json.chatInput }}",
         "options": {
-          "systemMessage": "You are the internal assistant for the team at Maple Grove Dental Studio, a dental clinic in New York City. You answer staff questions about internal policies (time off, schedules, sterilization and infection control, onboarding) and about the policies the clinic gives patients, using only the clinic documents.\n\nHow to answer:\n- For every question about the clinic, call search_clinic_documents first. Write the query in English as a short, standalone question, even when the user writes in another language.\n- Answer ONLY with information from the passages the tool returns. Never use general knowledge to fill gaps and never guess.\n- If the tool says there is no relevant information, or the passages do not answer the question, say clearly that you do not have that information, and suggest asking the office manager (schedules, time off, payroll) or the clinical lead (clinical procedures, infection control).\n- End every answer that uses the documents with its sources, for example: (Source: Aftercare Guide, Tooth Extraction, p. 1).\n- Reply in the same language the user writes in. Be brief, warm and clear: 1 to 5 sentences; use a short list only for steps.\n- For greetings or thanks, reply briefly without searching.\n\nFor safety-critical procedures (sterilization, exposure incidents), quote the steps exactly as the documents say them."
-        }
+          "systemMessage": "You are the internal assistant for the team at Maple Grove Dental Studio, a dental clinic in New York City. You answer staff questions about internal policies (time off, schedules, sterilization and infection control, onboarding) and about the policies the clinic gives patients, using only the clinic documents.\n\nHow to answer:\n- For every question about the clinic, call search_clinic_documents first. Write the query in English as a short, standalone question, even when the user writes in another language.\n- Answer ONLY with information from the passages the tool returns. Never use general knowledge to fill gaps and never guess.\n- If the tool says there is no relevant information, or the passages do not answer the question, say clearly that you do not have that information, and suggest asking the office manager (schedules, time off, payroll) or the clinical lead (clinical procedures, infection control).\n- End every answer that uses the documents with its sources, for example: (Source: Aftercare Guide, Tooth Extraction, p. 1).\n- Reply in the same language the user writes in. Be brief, warm and clear: 1 to 5 sentences; use a short list only for steps.\n- For greetings or thanks, reply briefly without searching.\n\nFor safety-critical procedures (sterilization, exposure incidents), quote the steps exactly as the documents say them.",
+          "maxTokensFromMemory": 8000
+        },
+        "needsFallback": true
       },
       "id": "node-0014-ai-agent",
       "name": "AI Agent",
@@ -188,7 +190,7 @@
             {
               "id": "output",
               "name": "output",
-              "value": "={{ $('AI Agent').first().json.output || \"Sorry, I can't answer right now. Please try again in a minute, or call the clinic at (212) 555-0147.\" }}",
+              "value": "={{ $('AI Agent').first().json.output || (/[¿¡ñáéíóú]|\\b(hola|que|qué|cuanto|cuánto|puedo|quiero|tengo|gracias|cómo|dónde)\\b/i.test($('When chat message received').first().json.chatInput || '') ? 'Disculpa, ahora mismo no puedo responder. Intenta de nuevo en un minuto o llama al (212) 555-0147.' : 'Sorry, I cannot answer right now. Please try again in a minute or call (212) 555-0147.') }}",
               "type": "string"
             }
           ]
@@ -203,6 +205,29 @@
         740,
         300
       ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-flash-lite-latest",
+        "options": {
+          "maxOutputTokens": 1024,
+          "temperature": 0.2
+        }
+      },
+      "id": "gemini-fallback-model",
+      "name": "Gemini Fallback Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        280,
+        640
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "gM4nK7pQ1wE9rT6y",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
     }
   ],
   "connections": {
@@ -268,6 +293,17 @@
             "node": "AI Agent",
             "type": "ai_tool",
             "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Fallback Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 1
           }
         ]
       ]
