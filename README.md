@@ -1,7 +1,7 @@
 # RAG Knowledge Assistant
 
-> **Work in progress.** The database layer, the document processor and the ingestion (Google Drive sync and upload
-> API) are done and tested end to end; the chat agents and the evaluation report come next.
+> **Work in progress.** Ingestion, hybrid search, the two chat agents and the search API work end to end; the
+> evaluation report (and the threshold calibration it drives) comes next.
 
 A retrieval-augmented generation (RAG) engine that serves **several agents from one knowledge store**. Each agent
 answers **only from the documents it is allowed to read**, **cites its sources**, and says **"I don't know"** when
@@ -22,6 +22,43 @@ Built with **n8n**, **Google Gemini**, **PostgreSQL + pgvector** and **Flyway**,
 
 A patient asking how many vacation days the staff get is told the assistant does not know — the answer exists,
 but not in a base the patient assistant can read.
+
+## Agents
+
+| Agent | Reads | Try it |
+|---|---|---|
+| Patient assistant | `patient-handbook` | Chat page: `http://localhost:5679/webhook/4f8c2a91-7d3e-4b6a-9e15-2c7d8a0f1b34/chat` |
+| Staff assistant | `patient-handbook`, `staff-handbook` | Chat page: `http://localhost:5679/webhook/9a3d6e72-1c5b-4f80-8b2e-6d4a1f9c7e05/chat` |
+
+Both are the same small workflow (n8n AI Agent + Gemini + Postgres chat memory + one tool) with a different prompt.
+The tool, `search_clinic_documents`, calls the sub-workflow *Tool: Search knowledge*:
+
+- **The agent is fixed by the workflow, never by the model**: the LLM only writes the query, so no user can talk it
+  into searching as another agent. Row level security does the rest.
+- **The query is rewritten in English** by the model, whatever the user's language, which helps full-text search
+  and similarity; the agent still answers in the user's language.
+- Each passage comes with a ready-to-cite source, e.g. `Aftercare Guide, Tooth Extraction > Eating and drinking, p. 1`.
+- The prompt: answer only from the passages, cite them, and say "I don't know" (with who to ask) when they do not
+  answer the question.
+- **Every answer is stored next to the searches that produced it** (`query_log.answer`, by conversation), so a bad
+  answer can be traced to the passages the agent saw.
+
+## Search API (for other agents)
+
+Any other agent — for example the WhatsApp receptionist — can use the same retrieval over HTTP:
+
+```bash
+curl -H "X-API-Key: $KEY" -H "Content-Type: application/json"      -d '{"query": "How long should I avoid coffee after whitening?"}' http://localhost:5679/webhook/search
+# {"ok":true,"answerable":true,"message":"...","query_id":12,
+#  "passages":[{"source":"Aftercare Guide, Teeth Whitening > The first 48 hours, p. 2","text":"...","similarity":0.78}]}
+```
+
+**The key decides the agent**: each key belongs to one agent and the request cannot change it, so a leaked key of
+the receptionist never reaches the staff handbook. Keys are created by the owner and stored only as a SHA-256 hash:
+
+```bash
+./scripts/create-api-key.sh patient-assistant "WhatsApp receptionist"   # prints the key once
+```
 
 ## Design decisions
 
@@ -108,6 +145,30 @@ curl -H "X-API-Key: $INGEST_API_KEY" -F knowledge_base=patient-handbook -F sourc
 `status` is `added`, `updated`, `unchanged` or `failed` (HTTP 422, with `error`). `title` defaults to the file
 name, `source_id` too: sending the same `source_id` again replaces that document.
 
+## Demo documents
+
+`demo/documents/` holds the source text of the eight demo documents (fictional, consistent with the receptionist's
+clinic data). `demo/build_documents.py` turns them into the formats a real clinic would have — PDF (with page
+numbers), DOCX (with tables) and Google Docs — so every extraction path is exercised:
+
+| Knowledge base | Document | Format |
+|---|---|---|
+| patient-handbook | Aftercare Guide | PDF (2 pages) |
+| patient-handbook | Dental Emergencies | PDF |
+| patient-handbook | Insurance and Payments | DOCX |
+| patient-handbook | Cancellation and Missed Appointments Policy | Google Doc |
+| patient-handbook | New Patient FAQ | Google Doc |
+| staff-handbook | Time Off and Scheduling Policy | DOCX |
+| staff-handbook | Sterilization and Infection Control Protocol | PDF |
+| staff-handbook | New Staff Onboarding Checklist | Google Doc |
+
+```bash
+docker build --target test -t rag-document-tools document-processor
+docker run --rm -v "$PWD/demo:/demo" rag-document-tools python /demo/build_documents.py   # -> demo/build/
+```
+
+Upload `demo/build/<knowledge base>/` to the matching Drive folder (the `.md` files as Google Docs).
+
 ## Getting started
 
 ### 1. Google Drive access (service account)
@@ -159,6 +220,10 @@ empty listing), deletion and restore, hybrid ranking, the "I don't know" thresho
   fails instead. Remove the last documents with `delete_document` if that is really intended.
 - Up to 1,000 files per folder (no paging yet); subfolders are not synced.
 - Permissions are per knowledge base, not per document or user.
+- On Gemini's free tier, replies can take from a few seconds to over a minute when the models are under high demand
+  (503 errors are retried; after three failures the user gets an apology, not an error). A paid tier fixes this.
+- The "I don't know" threshold (0.6) is a placeholder until the evaluation set calibrates it: an unrelated question
+  can still get loosely related passages, and only the prompt keeps the agent from using them.
 
 ## License
 

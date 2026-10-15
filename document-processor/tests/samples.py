@@ -72,3 +72,24 @@ def make_blank_pdf() -> bytes:
     pdf = FPDF()
     pdf.add_page()
     return bytes(pdf.output())
+
+
+def make_pdf_with_bold_subheadings() -> bytes:
+    """Subheadings in bold at (almost) the body size, as many real documents do, plus a bold lead-in sentence."""
+    pdf = FPDF(unit="pt", format="letter")
+    pdf.add_page()
+
+    def line(text, size, style="", gap=8):
+        pdf.set_font("Helvetica", style, size)
+        pdf.set_x(72)
+        pdf.cell(0, size * 1.25, text, new_x="LMARGIN", new_y="NEXT")
+        pdf.ln(gap)
+
+    line("Tooth Extraction", 18, "B")
+    line("The first 24 hours", 11.5, "B")
+    line("Bite gently on the gauze for thirty minutes.", 11)
+    line("Eating and drinking", 11.5, "B")
+    line("Wait two hours before eating.", 11)
+    line("Important.", 11, "B")
+    line("Do not drink through a straw.", 11)
+    return bytes(pdf.output())

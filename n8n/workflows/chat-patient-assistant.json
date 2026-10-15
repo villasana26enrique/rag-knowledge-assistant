@@ -1,0 +1,283 @@
+{
+  "id": "C4pTn8Yq1ZsK6wHd",
+  "name": "Chat: Patient assistant",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "mode": "hostedChat",
+        "authentication": "none",
+        "initialMessages": "Hi! I'm the Maple Grove Dental Studio assistant. Ask me about aftercare, insurance and payments, appointments or dental emergencies.",
+        "options": {
+          "title": "Maple Grove Dental Studio",
+          "subtitle": "Questions about aftercare, insurance, payments and our policies",
+          "inputPlaceholder": "Type your question...",
+          "responseMode": "lastNode"
+        }
+      },
+      "id": "node-0006-when-chat-message-received",
+      "name": "When chat message received",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.5,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "4f8c2a91-7d3e-4b6a-9e15-2c7d8a0f1b34"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "={{ $json.chatInput }}",
+        "options": {
+          "systemMessage": "You are the virtual assistant of Maple Grove Dental Studio, a dental clinic in New York City. You answer patients' questions using only the clinic documents.\n\nHow to answer:\n- For every question about the clinic, call search_clinic_documents first. Write the query in English as a short, standalone question, even when the user writes in another language.\n- Answer ONLY with information from the passages the tool returns. Never use general knowledge to fill gaps and never guess.\n- If the tool says there is no relevant information, or the passages do not answer the question, say clearly that you do not have that information, and suggest calling the clinic at (212) 555-0147.\n- End every answer that uses the documents with its sources, for example: (Source: Aftercare Guide, Tooth Extraction, p. 1).\n- Reply in the same language the user writes in. Be brief, warm and clear: 1 to 5 sentences; use a short list only for steps.\n- For greetings or thanks, reply briefly without searching.\n\nSafety:\n- Never diagnose and never recommend medication or doses.\n- For severe pain, facial swelling, bleeding that does not stop, trauma or a knocked-out tooth, tell the patient to call (212) 555-0147 right away, or 911 if it is life-threatening.\n- You cannot book or change appointments in this chat: patients can do it on WhatsApp or by calling (212) 555-0147."
+        }
+      },
+      "id": "node-0007-ai-agent",
+      "name": "AI Agent",
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        260,
+        300
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-3.1-flash-lite",
+        "options": {
+          "maxOutputTokens": 1024,
+          "temperature": 0.2
+        }
+      },
+      "id": "node-0008-gemini-chat-model",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        140,
+        520
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "gM4nK7pQ1wE9rT6y",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "={{ 'patient-assistant:' + $('When chat message received').first().json.sessionId }}",
+        "tableName": "chat_memory.chat_history",
+        "contextWindowLength": 10
+      },
+      "id": "node-0009-chat-memory-postgres-",
+      "name": "Chat memory (Postgres)",
+      "type": "@n8n/n8n-nodes-langchain.memoryPostgresChat",
+      "typeVersion": 1.4,
+      "position": [
+        300,
+        520
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "pG7rT2kW9mQ4xL1z",
+          "name": "Postgres rag_app"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "description": "Searches the clinic documents and returns the most relevant passages, each with its source. Use it for every question about the clinic.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "S7kQx2Wm5RpL9vNb",
+          "cachedResultName": "Tool: Search knowledge"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "agent": "patient-assistant",
+            "query": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('query', 'Short standalone question in English, e.g. How long should I wait to eat after a tooth extraction?') }}",
+            "session_id": "={{ 'patient-assistant:' + $('When chat message received').first().json.sessionId }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false,
+              "id": "agent",
+              "displayName": "agent"
+            },
+            {
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false,
+              "id": "query",
+              "displayName": "query"
+            },
+            {
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false,
+              "id": "session_id",
+              "displayName": "session_id"
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        }
+      },
+      "id": "node-0010-search-clinic-documents",
+      "name": "search_clinic_documents",
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        460,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT knowledge.record_session_answer($1, $2, $3) AS r;",
+        "options": {
+          "queryReplacement": "={{ ['patient-assistant', 'patient-assistant:' + $('When chat message received').first().json.sessionId, $json.output ?? ''] }}"
+        }
+      },
+      "id": "node-0011-store-the-answer",
+      "name": "Store the answer",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        520,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "pG7rT2kW9mQ4xL1z",
+          "name": "Postgres rag_app"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "output",
+              "name": "output",
+              "value": "={{ $('AI Agent').first().json.output || \"Sorry, I can't answer right now. Please try again in a minute, or call the clinic at (212) 555-0147.\" }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0012-reply",
+      "name": "Reply",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        740,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "When chat message received": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Store the answer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store the answer": {
+      "main": [
+        [
+          {
+            "node": "Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat memory (Postgres)": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "search_clinic_documents": {
+      "ai_tool": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {},
+  "nodeGroups": [],
+  "tags": []
+}

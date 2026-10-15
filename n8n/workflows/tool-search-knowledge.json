@@ -1,0 +1,207 @@
+{
+  "id": "S7kQx2Wm5RpL9vNb",
+  "name": "Tool: Search knowledge",
+  "description": null,
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "agent",
+              "type": "string"
+            },
+            {
+              "name": "query",
+              "type": "string"
+            },
+            {
+              "name": "session_id",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "id": "node-0001-start",
+      "name": "Start",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ content: { parts: [{ text: $json.query }] }, taskType: 'RETRIEVAL_QUERY', outputDimensionality: 768 }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "node-0002-embed-the-question",
+      "name": "Embed the question",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        220,
+        300
+      ],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "gM4nK7pQ1wE9rT6y",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT knowledge.search_knowledge($1, $2, $3, 5, NULLIF($4, '')) AS r;",
+        "options": {
+          "queryReplacement": "={{ [$('Start').first().json.agent, $('Start').first().json.query, JSON.stringify($json.embedding.values), $('Start').first().json.session_id || ''] }}"
+        }
+      },
+      "id": "node-0003-search-the-knowledge-base",
+      "name": "Search the knowledge base",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.7,
+      "position": [
+        440,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "pG7rT2kW9mQ4xL1z",
+          "name": "Postgres rag_app"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Compact passages with a ready-to-cite source: \"Aftercare Guide, Tooth Extraction > Eating and drinking, p. 1\"\nconst r = $input.first().json.r;\nif (!r.ok) return [{ json: { ok: false, answerable: false, message: r.message, passages: [] } }];\nconst passages = r.results.map(p => {\n  const section = p.section?.startsWith(p.document_title) ? p.section.slice(p.document_title.length).replace(/^ > /, '') : p.section;\n  const pages = p.page_start ? (p.page_start === p.page_end ? `p. ${p.page_start}` : `pp. ${p.page_start}-${p.page_end}`) : null;\n  return { source: [p.document_title, section, pages].filter(Boolean).join(', '), text: p.content,\n           url: p.source_url ?? null, similarity: p.similarity };\n});\nreturn [{ json: { ok: true, answerable: r.answerable, message: r.message, query_id: r.query_id, passages } }];"
+      },
+      "id": "node-0004-format-for-the-agent",
+      "name": "Format for the agent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        660,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "manual",
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ok",
+              "name": "ok",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "answerable",
+              "name": "answerable",
+              "value": false,
+              "type": "boolean"
+            },
+            {
+              "id": "message",
+              "name": "message",
+              "value": "The document search is not available right now. Tell the user you cannot check the documents at the moment.",
+              "type": "string"
+            },
+            {
+              "id": "passages",
+              "name": "passages",
+              "value": "={{ [] }}",
+              "type": "array"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "node-0005-search-unavailable",
+      "name": "Search unavailable",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        660,
+        450
+      ]
+    }
+  ],
+  "connections": {
+    "Start": {
+      "main": [
+        [
+          {
+            "node": "Embed the question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embed the question": {
+      "main": [
+        [
+          {
+            "node": "Search the knowledge base",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search unavailable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search the knowledge base": {
+      "main": [
+        [
+          {
+            "node": "Format for the agent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Search unavailable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "meta": {},
+  "nodeGroups": [],
+  "tags": []
+}

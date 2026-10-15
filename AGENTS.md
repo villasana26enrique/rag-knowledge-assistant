@@ -34,6 +34,10 @@ full text, fused with Reciprocal Rank Fusion) and return nothing below a similar
 - RLS protects against a query that forgets to filter. It does not authenticate the caller: whoever can call
   `search_knowledge` chooses the agent, so the agent name must come from the workflow, never from user input.
 - New tables holding knowledge-base data need the same two policies (see `R__row_level_security.sql`) and a test.
+- Chat memory lives in its own schema, `chat_memory`: n8n's memory node always runs `CREATE TABLE IF NOT EXISTS`,
+  which needs CREATE on the schema. `rag_app` has CREATE there only — never grant it CREATE on `knowledge`.
+- Search API keys: only their SHA-256 hash is stored. `create_api_key` and `revoke_api_key` are revoked from PUBLIC
+  (owner only); `rag_app` can only check a key with `authenticate_api_key`. The agent always comes from the key.
 
 ## Database changes (Flyway)
 
@@ -68,11 +72,16 @@ full text, fused with Reciprocal Rank Fusion) and return nothing below a similar
 - The JSON files in `n8n/workflows/` are the source of truth for the repository, but n8n runs from its own database.
   After changing a workflow in n8n, run `./scripts/export-workflows.sh` and commit the result.
 - Sub-workflows are called **by id**; keep ids stable (import preserves them). New workflows must be added to the id
-  map in `scripts/export-workflows.sh` and to the publish list in `scripts/setup-n8n.sh` (sub-workflows first).
+  map in `scripts/export-workflows.sh` and to the publish list in `scripts/reload-workflows.sh` (sub-workflows first).
+- **Importing a workflow unpublishes it**, and an unpublished scheduled workflow just stops running, with no error.
+  To load changes from the JSON files, always run `./scripts/reload-workflows.sh` (imports and publishes them all).
 - Credential ids are fixed in `n8n/scripts/build-credentials.js` and referenced by the workflows; keep them in sync.
   n8n connects to PostgreSQL as `rag_app`, never as the owner.
 - Never hard-code instance data in workflows: Drive folder ids live in `knowledge.knowledge_bases.source_folder_id`
   (set by `setup-n8n.sh` from `DRIVE_FOLDER_<KNOWLEDGE_BASE>` variables), credentials are referenced, never embedded.
+- Chat agents: the agent slug is a fixed value in the tool node, never `$fromAI`. The chat trigger answers with
+  the last node, which must output `{ output }` (the `Reply` node); keep side effects (`Store the answer`) before it
+  with `onError: continueRegularOutput`.
 - `Ingest: Apply document change` must always end in a result item (`status`: added, updated, unchanged, deleted,
   already_deleted or failed): every risky node routes its error output to `Report failure`, so one bad file never
   stops a sync.
@@ -96,6 +105,9 @@ full text, fused with Reciprocal Rank Fusion) and return nothing below a similar
 | Apply migrations | `docker compose run --rm flyway` |
 | Document processor tests | `docker build --target test document-processor` |
 | Set up a fresh n8n (credentials + Drive folders + workflows) | `./scripts/setup-n8n.sh` |
+| Create a search API key | `./scripts/create-api-key.sh <agent> "<who uses it>"` |
+| Build the demo documents | `docker run --rm -v "$PWD/demo:/demo" rag-document-tools python /demo/build_documents.py` |
 | Export workflows | `./scripts/export-workflows.sh` |
+| Load workflow changes into n8n | `./scripts/reload-workflows.sh` |
 | Sync Drive now | `docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=Q8vNd2LxR4tYw7Ka` |
 | Database shell (owner) | `docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"'` |

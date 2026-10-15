@@ -24,6 +24,14 @@ def test_each_heading_path_is_its_own_labeled_section():
     assert chunks[0].embedding_text == "Aftercare Guide > Tooth Extraction\n\nBite on the gauze.\n\nDo not eat for two hours."
 
 
+def test_a_main_heading_equal_to_the_title_is_not_repeated():
+    chunks = chunk_document("Aftercare Guide", [
+        Block(("Aftercare Guide",), "Intro."),
+        Block(("aftercare guide", "Tooth Extraction"), "Bite on the gauze."),
+    ])
+    assert [c.section for c in chunks] == ["Aftercare Guide", "Aftercare Guide > Tooth Extraction"]
+
+
 def test_text_before_any_heading_is_labeled_with_the_title():
     assert chunk_document("FAQ", [Block((), "Welcome.")])[0].section == "FAQ"
 

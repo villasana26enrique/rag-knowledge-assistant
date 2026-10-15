@@ -34,13 +34,6 @@ for variable in $(compgen -v | grep '^DRIVE_FOLDER_' || true); do
       "$slug" "${!variable}"
 done
 
-docker compose exec -T n8n n8n import:workflow --separate --input=/repo/workflows
-
-# Sub-workflows first, so they exist when their callers are published
-for id in V5gWq8Rn2KdL7yUa H3pZc6Jm9TfB1sXe Q8vNd2LxR4tYw7Ka M1tFx4Ps6BjN9cQh; do
-  docker compose exec -T n8n n8n publish:workflow --id="$id"
-done
-
-# Published workflows are loaded at startup
-docker compose restart n8n
+ENV_FILE="$ENV_FILE" ./scripts/reload-workflows.sh
 echo "Done. Open n8n, create the owner account, and run 'Ingest: Sync Google Drive' (or wait 15 minutes)."
+echo "Search API keys: ./scripts/create-api-key.sh <agent> <label>"

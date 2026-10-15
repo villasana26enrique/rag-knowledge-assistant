@@ -4,8 +4,10 @@
 SET search_path TO knowledge, public;
 
 -- p_query_embedding: the question embedded with the base's model, as text '[0.1, 0.2, ...]'
+-- p_session_id: the conversation, so the final answer can be stored next to the search (record_session_answer)
+DROP FUNCTION IF EXISTS search_knowledge(text, text, text, int);
 CREATE OR REPLACE FUNCTION search_knowledge(p_agent text, p_question text, p_query_embedding text,
-                                            p_limit int DEFAULT 5)
+                                            p_limit int DEFAULT 5, p_session_id text DEFAULT NULL)
 RETURNS jsonb
 LANGUAGE plpgsql
 SET search_path = knowledge, public AS $$
@@ -93,8 +95,8 @@ BEGIN
   v_answerable := v_top IS NOT NULL AND v_top >= v_agent.min_similarity;
 
   -- Logged even when unanswerable: the near misses are what the threshold is calibrated with
-  INSERT INTO query_log (agent_id, question, top_similarity, answerable, results, search_ms)
-  VALUES (v_agent.id, p_question, v_top, v_answerable,
+  INSERT INTO query_log (agent_id, session_id, question, top_similarity, answerable, results, search_ms)
+  VALUES (v_agent.id, nullif(p_session_id, ''), p_question, v_top, v_answerable,
           coalesce((SELECT jsonb_agg(jsonb_build_object('chunk_id', r->'chunk_id', 'document_id', r->'document_id',
                                                         'similarity', r->'similarity', 'score', r->'score'))
                     FROM jsonb_array_elements(v_results) r), '[]'),
@@ -113,7 +115,25 @@ BEGIN
 END $$;
 
 
--- Stores the agent's final answer next to the search that produced it
+-- Stores the agent's final answer next to the searches of that turn of the conversation
+CREATE OR REPLACE FUNCTION record_session_answer(p_agent text, p_session_id text, p_answer text) RETURNS jsonb
+LANGUAGE plpgsql
+SET search_path = knowledge, public AS $$
+DECLARE
+  v_count int;
+BEGIN
+  UPDATE query_log q
+  SET answer = p_answer
+  FROM agents a
+  WHERE a.id = q.agent_id AND a.slug = p_agent AND q.session_id = p_session_id AND q.answer IS NULL
+    AND q.created_at > now() - interval '10 minutes';
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  -- 0 is normal: the agent may answer without searching ("hello")
+  RETURN jsonb_build_object('ok', true, 'searches', v_count);
+END $$;
+
+
+-- Stores the final answer next to one search (for callers of the search API)
 CREATE OR REPLACE FUNCTION record_answer(p_query_id bigint, p_answer text) RETURNS jsonb
 LANGUAGE plpgsql
 SET search_path = knowledge, public AS $$

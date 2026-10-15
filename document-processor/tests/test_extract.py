@@ -1,7 +1,7 @@
 import pytest
 
 from extract import DOCX, PDF, Block, ExtractionError, UnsupportedTypeError, extract_blocks
-from tests.samples import make_blank_pdf, make_docx, make_markdown, make_pdf
+from tests.samples import make_blank_pdf, make_docx, make_markdown, make_pdf, make_pdf_with_bold_subheadings
 
 
 def test_docx_keeps_heading_path_lists_and_tables():
@@ -30,6 +30,17 @@ def test_pdf_headings_come_from_font_sizes():
         ("Tooth Extraction", "Eating and drinking"),
         ("Tooth Extraction", "Eating and drinking"),
         ("Insurance",),
+    ]
+
+
+def test_pdf_bold_lines_at_body_size_are_subheadings():
+    blocks = extract_blocks(make_pdf_with_bold_subheadings(), PDF)
+    assert [(b.headings, b.text) for b in blocks] == [
+        (("Tooth Extraction", "The first 24 hours"), "Bite gently on the gauze for thirty minutes."),
+        (("Tooth Extraction", "Eating and drinking"), "Wait two hours before eating."),
+        # A bold sentence ending with a period is a lead-in, not a heading
+        (("Tooth Extraction", "Eating and drinking"), "Important."),
+        (("Tooth Extraction", "Eating and drinking"), "Do not drink through a straw."),
     ]
 
 

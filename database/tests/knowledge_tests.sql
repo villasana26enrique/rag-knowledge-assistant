@@ -25,6 +25,9 @@ LANGUAGE sql IMMUTABLE AS $$
     FROM generate_series(1, 768) i))
 $$;
 
+-- A search API key for agent A, created by the owner (rag_app cannot create keys)
+SELECT set_config('test.api_key', knowledge.create_api_key('test-agent-a', 'tests')->>'api_key', true);
+
 SET LOCAL ROLE rag_app;
 
 DO $$
@@ -231,6 +234,57 @@ BEGIN
   r := knowledge.purge_old_logs(90);
   ASSERT (r->>'query_log_deleted')::int >= 1, 'Old searches should be purged';
   ASSERT NOT EXISTS (SELECT FROM knowledge.query_log WHERE question = 'old question'), 'The old search should be gone';
+
+  ---------------------------------------------------------------- conversations
+  PERFORM knowledge.search_knowledge('test-agent-a', 'First question', e1::text, 5, 'session-1');
+  PERFORM knowledge.search_knowledge('test-agent-a', 'Second question', e1::text, 5, 'session-1');
+  r := knowledge.record_session_answer('test-agent-a', 'session-1', 'The answer.');
+  ASSERT (r->>'searches')::int = 2, 'The answer should be stored with both searches of the turn: ' || r::text;
+  r := knowledge.record_session_answer('test-agent-a', 'session-1', 'Another answer.');
+  ASSERT (r->>'searches')::int = 0, 'Searches that already have their answer are not overwritten';
+  PERFORM knowledge.search_knowledge('test-agent-a', 'Third question', e1::text, 5, 'session-1');
+  r := knowledge.record_session_answer('test-agent-b', 'session-1', 'Wrong agent.');
+  ASSERT (r->>'searches')::int = 0, 'Another agent cannot answer for this conversation';
+
+  INSERT INTO chat_memory.chat_history (session_id, message, created_at)
+  VALUES ('old-session', '{"type": "human", "content": "hi"}', now() - interval '100 days');
+  r := knowledge.purge_old_logs(90);
+  ASSERT (r->>'chat_messages_deleted')::int >= 1, 'Old chat messages should be purged: ' || r::text;
+
+  ---------------------------------------------------------------- search API keys
+  r := knowledge.authenticate_api_key(current_setting('test.api_key'));
+  ASSERT (r->>'ok')::boolean AND r->>'agent' = 'test-agent-a', 'A valid key identifies its agent: ' || r::text;
+  ASSERT (knowledge.authenticate_api_key('rag_not-a-real-key')->>'ok')::boolean = false, 'Unknown keys are rejected';
+  ASSERT (knowledge.authenticate_api_key('')->>'ok')::boolean = false, 'Empty keys are rejected';
+  ASSERT (knowledge.authenticate_api_key(NULL)->>'ok')::boolean = false, 'Missing keys are rejected';
+  ASSERT NOT EXISTS (SELECT FROM knowledge.agent_api_keys WHERE key_hash = current_setting('test.api_key')
+                     OR key_prefix = current_setting('test.api_key')), 'The key itself must never be stored';
+  BEGIN
+    PERFORM knowledge.create_api_key('test-agent-ab', 'stolen');
+    ASSERT false, 'rag_app must not be able to create keys';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+  BEGIN
+    UPDATE knowledge.agent_api_keys SET revoked_at = NULL;
+    ASSERT false, 'rag_app must not be able to change keys';
+  EXCEPTION WHEN insufficient_privilege THEN
+    NULL;
+  END;
+END $$;
+
+-- Revoking is for the owner too
+RESET ROLE;
+DO $$
+DECLARE
+  r jsonb;
+BEGIN
+  r := knowledge.revoke_api_key(left(current_setting('test.api_key'), 12));
+  ASSERT (r->>'ok')::boolean, 'The owner can revoke a key by its prefix';
+  ASSERT (knowledge.authenticate_api_key(current_setting('test.api_key'))->>'ok')::boolean = false,
+         'A revoked key no longer works';
+  ASSERT (knowledge.create_api_key('nobody', 'x')->>'ok')::boolean = false, 'Keys need a known agent';
+  ASSERT (knowledge.create_api_key('test-agent-a', ' ')->>'ok')::boolean = false, 'Keys need a label';
 
   RAISE NOTICE 'ALL TESTS PASSED';
 END $$;

@@ -1,7 +1,7 @@
 """Text extraction: PDF, DOCX and Markdown / plain text -> ordered blocks of text with their heading path.
 
 Headings matter for retrieval: "do not eat for two hours" is only useful if we know it belongs to
-"Tooth Extraction". DOCX and Markdown declare them; in PDFs they are inferred from the font size.
+"Tooth Extraction". DOCX and Markdown declare them; in PDFs they are inferred from the font size and weight.
 """
 import io
 import math
@@ -19,7 +19,7 @@ DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 TEXT_TYPES = {"text/plain", "text/markdown"}
 SUPPORTED_TYPES = {PDF, DOCX, *TEXT_TYPES}
 
-# A PDF line at least this much larger than the body text is a heading
+# A PDF line at least this much larger than the body text is a heading; so is a short line entirely in bold
 HEADING_SIZE_RATIO = 1.15
 MAX_HEADING_WORDS = 15
 PAGE_NUMBER = re.compile(r"^(page\s+)?\d+(\s*(of|/)\s*\d+)?$", re.IGNORECASE)
@@ -139,6 +139,7 @@ class _Line:
     size: float
     y: float
     page: int
+    bold: bool = False
 
 
 def _from_pdf(data: bytes) -> list[Block]:
@@ -157,8 +158,9 @@ def _from_pdf(data: bytes) -> list[Block]:
         return []
 
     body_size = _body_size(lines)
-    heading_sizes = sorted({round(line.size, 1) for line in lines if _looks_like_heading(line, body_size)},
-                           reverse=True)
+    # Each distinct heading style is a level: larger first, and bold before regular at the same size
+    styles = sorted({style for line in lines if (style := _heading_style(line, body_size))},
+                    key=lambda style: (-style[0], not style[1]))
 
     blocks, headings, paragraph = [], (), []
     previous, previous_level, continues = None, 0, False
@@ -169,7 +171,8 @@ def _from_pdf(data: bytes) -> list[Block]:
             paragraph.clear()
 
     for line in lines:
-        level = heading_sizes.index(round(line.size, 1)) + 1 if _looks_like_heading(line, body_size) else 0
+        style = _heading_style(line, body_size)
+        level = styles.index(style) + 1 if style else 0
         if level:
             flush()
             continues = False
@@ -193,14 +196,14 @@ def _pdf_lines(page, page_number: int) -> list[_Line]:
     """Rebuilds the page's lines with their font size and vertical position."""
     lines: list[_Line] = []
     current: list[str] = []
-    state = {"size": 0.0, "y": None}
+    state = {"size": 0.0, "y": None, "bold": None}
 
     def end_line():
         text = _clean("".join(current))
         if text:
-            lines.append(_Line(text, state["size"], state["y"], page_number))
+            lines.append(_Line(text, state["size"], state["y"], page_number, bool(state["bold"])))
         current.clear()
-        state["size"], state["y"] = 0.0, None
+        state["size"], state["y"], state["bold"] = 0.0, None, None
 
     def visit(text, cm, tm, font_dict, font_size):
         if not text:
@@ -218,6 +221,8 @@ def _pdf_lines(page, page_number: int) -> list[_Line]:
                     state["y"] = y
                 if part.strip():
                     state["size"] = max(state["size"], size)
+                    # The line is bold only if all of its text is
+                    state["bold"] = _is_bold(font_dict) and state["bold"] is not False
                 current.append(part)
 
     page.extract_text(visitor_text=visit)
@@ -240,9 +245,19 @@ def _body_size(lines: list[_Line]) -> float:
     return weights.most_common(1)[0][0]
 
 
-def _looks_like_heading(line: _Line, body_size: float) -> bool:
-    return (body_size > 0 and line.size >= body_size * HEADING_SIZE_RATIO
-            and len(line.text.split()) <= MAX_HEADING_WORDS)
+def _is_bold(font_dict) -> bool:
+    name = str((font_dict or {}).get("/BaseFont", ""))
+    return any(weight in name.lower() for weight in ("bold", "black", "heavy"))
+
+
+def _heading_style(line: _Line, body_size: float) -> tuple[float, bool] | None:
+    """(size, bold) when the line looks like a heading, None otherwise."""
+    if body_size <= 0 or len(line.text.split()) > MAX_HEADING_WORDS:
+        return None
+    larger = line.size >= body_size * HEADING_SIZE_RATIO
+    # Bold at body size is a heading only on its own: "Note: rinse well." is a bold lead-in, not a title
+    bold_title = line.bold and line.size >= body_size * 0.95 and not re.search(r"[.,;:]$", line.text)
+    return (round(line.size, 1), line.bold) if larger or bold_title else None
 
 
 def _same_paragraph(previous: _Line | None, line: _Line) -> bool:

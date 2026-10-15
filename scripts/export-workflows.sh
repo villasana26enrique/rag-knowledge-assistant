@@ -12,6 +12,11 @@ declare -A WORKFLOWS=(
   [ingest-sync-knowledge-base]=H3pZc6Jm9TfB1sXe
   [ingest-apply-document-change]=V5gWq8Rn2KdL7yUa
   [ingest-upload-api]=M1tFx4Ps6BjN9cQh
+  [tool-search-knowledge]=S7kQx2Wm5RpL9vNb
+  [chat-patient-assistant]=C4pTn8Yq1ZsK6wHd
+  [chat-staff-assistant]=C9sFr3Lm7XvB2qJe
+  [api-search]=A6hWd1Ns4TkP8yRc
+  [daily-maintenance]=D2mKc7Vx9QwL5tGa
 )
 
 for name in "${!WORKFLOWS[@]}"; do

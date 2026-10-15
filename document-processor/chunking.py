@@ -42,6 +42,9 @@ def chunk_document(title: str, blocks: list[Block], max_tokens: int = 500, overl
     overlap_tokens = int(max_tokens * overlap_ratio)
     chunks = []
     for headings, section_blocks in groupby(blocks, key=lambda b: b.headings):
+        # Documents usually open with their own name as the main heading: do not repeat it in the label
+        if headings and headings[0].casefold() == title.casefold():
+            headings = headings[1:]
         section = SECTION_SEPARATOR.join((title, *headings))
         units = [unit for block in section_blocks for unit in _split_to_fit(block, max_tokens)]
         chunks.extend(_pack(section, units, max_tokens, overlap_tokens))
