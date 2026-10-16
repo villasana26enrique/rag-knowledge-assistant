@@ -106,6 +106,9 @@ BEGIN
   RETURN jsonb_build_object(
     'ok', true,
     'query_id', v_query_id,
+    -- Similarity of the best candidate, even below the threshold: what the threshold is calibrated with
+    'top_similarity', round(v_top::numeric, 4),
+    'min_similarity', v_agent.min_similarity,
     'answerable', v_answerable,
     'message', CASE WHEN v_answerable
                     THEN 'Answer only from these passages and cite their document titles.'

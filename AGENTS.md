@@ -95,6 +95,16 @@ full text, fused with Reciprocal Rank Fusion) and return nothing below a similar
   `docker compose exec -T -e N8N_RUNNERS_BROKER_PORT=5690 n8n n8n execute --id=Q8vNd2LxR4tYw7Ka`
 - Test with fake documents named `TEST - ...` and remove them afterwards (from Drive and from the database).
 
+## Evaluations (`evals/`)
+
+- `evals/cases.json` is the evaluation set: each case has the agent, the question, the documents that should be
+  retrieved, a reference answer and whether it should be answered at all. Add a case for every bug found in a
+  conversation, so it never comes back unnoticed.
+- `python evals/run_evals.py` (standard library only; the stack must be running with the demo documents ingested)
+  writes `evals/report.md` and `evals/results.json`. The judge is Gemini: it scores correctness against the reference
+  and lists claims not supported by the agent's documents (`demo/documents/`).
+- Run it after changing prompts, chunking, the search or the threshold, and compare with the committed report.
+
 ## Secrets
 
 - Never commit `.env`. Document every new variable in `.env.example` with a fake value.
@@ -112,6 +122,7 @@ full text, fused with Reciprocal Rank Fusion) and return nothing below a similar
 | Document processor tests | `docker build --target test document-processor` |
 | Set up a fresh n8n (credentials + Drive folders + workflows) | `./scripts/setup-n8n.sh` |
 | Create a search API key | `./scripts/create-api-key.sh <agent> "<who uses it>"` |
+| Run the evaluations | `python evals/run_evals.py` (or `--only p01,n02`) |
 | Build the demo documents | `docker run --rm -v "$PWD/demo:/demo" rag-document-tools python /demo/build_documents.py` |
 | Export workflows | `./scripts/export-workflows.sh` |
 | Load workflow changes into n8n | `./scripts/reload-workflows.sh` |

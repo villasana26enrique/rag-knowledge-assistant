@@ -1,7 +1,7 @@
 # RAG Knowledge Assistant
 
-> **Work in progress.** Ingestion, hybrid search, the two chat agents and the search API work end to end; the
-> evaluation report (and the threshold calibration it drives) comes next.
+> **Status.** Ingestion, hybrid search, the two chat agents, the search API and the evaluation suite work end to
+> end; the WhatsApp receptionist uses this search API in production-like tests.
 
 A retrieval-augmented generation (RAG) engine that serves **several agents from one knowledge store**. Each agent
 answers **only from the documents it is allowed to read**, **cites its sources**, and says **"I don't know"** when
@@ -42,6 +42,37 @@ The tool, `search_clinic_documents`, calls the sub-workflow *Tool: Search knowle
   answer the question.
 - **Every answer is stored next to the searches that produced it** (`query_log.answer`, by conversation), so a bad
   answer can be traced to the passages the agent saw.
+
+## Evaluation
+
+Every change is measured against an evaluation set, not judged by a few chats. `evals/cases.json` has
+34 questions: answerable ones (single document, several documents, in Spanish, the staff agent reading the
+patient handbook) and ones that **must** be refused (out of scope, or in the other agent's knowledge base).
+`python evals/run_evals.py` asks the real system and an LLM judge scores every answer against a reference and
+against the documents the agent is allowed to read. Latest run ([full report](evals/report.md)):
+
+| Metric | Result |
+|---|---|
+| Expected document in the top 5 passages | 27/27 (100%) |
+| Correct answers (judge ≥ 4/5) | 27/27 (100%), mean 4.94/5 |
+| Answers with no claim outside the documents | 34/34 (100%) |
+| Says "I don't know" when it should (out of scope, other agent's documents) | 7/7 (100%) |
+| Says "I don't know" when it should not | 0/27 |
+| Staff passages returned to the patient agent | 0 |
+| Median response time (Gemini free tier) | 16 s |
+
+The judge was tested before trusting it: fed a wrong number, invented advice, a correct answer with one invented
+fee, an isolation breach and a false refusal, it caught all five.
+
+**What the numbers say about the threshold.** No similarity threshold separates relevant from irrelevant questions
+on its own: "How long after a cleaning can I eat sweets?" (not in the documents) scores 0.66, while "Do you accept
+Medicaid?" (answered in the documents) scores 0.65. A threshold high enough to block the first would refuse the
+second. So the design has two layers: a permissive threshold (0.6, per agent in `knowledge.agents.min_similarity`)
+drops clearly unrelated questions, and the agent's prompt refuses when the passages it gets do not answer the
+exact question. With both, every out-of-scope question was refused and no answer contained an unsupported claim.
+
+The set is small and written from the same documents, so these numbers are optimistic; its value is catching
+regressions. Every bug found in a real conversation becomes a new case.
 
 ## Search API (for other agents)
 
